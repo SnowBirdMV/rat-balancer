@@ -119,6 +119,12 @@ python3 rat_group_balancer.py test_csv/impossible_strict_delta.csv --groups 2 --
 python3 rat_group_balancer.py test_csv/performance_100.csv --groups 10 --deltas 25,10,20,20
 ```
 
+100-row performance test with max-time optimization (search for best up to 10 seconds):
+
+```bash
+python3 rat_group_balancer.py test_csv/performance_100.csv --groups 10 --deltas 25,10,20,20 --optimize-seconds 10
+```
+
 ## Exit Codes
 
 - `0`: success (valid grouping found)
