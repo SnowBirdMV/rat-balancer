@@ -2,9 +2,9 @@
 
 `rat_group_balancer.py` builds equal-sized groups of rats from a CSV while balancing each metric column across groups.
 
-For each numeric column, the script checks this rule:
+For each numeric column, the script checks pairwise group averages:
 
-`max(group_average) - min(group_average) <= allowed_delta_for_that_column`
+`abs(group_average_i - group_average_j) <= allowed_delta_for_that_column` for all group pairs `i, j`.
 
 ## Requirements
 
@@ -34,7 +34,7 @@ python3 rat_group_balancer.py input.csv --groups 4 --deltas 5,2,3
 This writes:
 
 - `grouped_rats.csv`: original rows + `Group` column (`G1`, `G2`, ...)
-- `group_summary.csv`: group averages + spread row + allowed delta row
+- `group_summary.csv`: group averages + `MaxPairwiseDiff` row + `AvgPairwiseDiff` row + `AllowedDelta` row
 
 ## Delta Formats
 

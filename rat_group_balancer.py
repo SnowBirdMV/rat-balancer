@@ -46,7 +46,8 @@ class RatRecord:
 @dataclass
 class Evaluation:
     score: float
-    spreads: list[float]
+    max_pairwise_diffs: list[float]
+    avg_pairwise_diffs: list[float]
     means_by_group: list[list[float]]
 
 
@@ -231,17 +232,41 @@ def evaluate_groups(
         for col_idx in range(metric_count):
             means_by_group[group_idx][col_idx] = sums[col_idx] / denom
 
-    spreads = [0.0] * metric_count
+    max_pairwise_diffs = [0.0] * metric_count
+    avg_pairwise_diffs = [0.0] * metric_count
     score = 0.0
+
     for col_idx in range(metric_count):
         col_means = [means_by_group[group_idx][col_idx] for group_idx in range(group_count)]
-        spread = max(col_means) - min(col_means)
-        spreads[col_idx] = spread
-        excess = spread - deltas[col_idx]
-        if excess > 0:
-            score += excess
 
-    return Evaluation(score=score, spreads=spreads, means_by_group=means_by_group)
+        max_diff = 0.0
+        pairwise_excess_total = 0.0
+        pairwise_diff_total = 0.0
+        pair_count = 0
+        for i in range(group_count):
+            for j in range(i + 1, group_count):
+                diff = abs(col_means[i] - col_means[j])
+                pairwise_diff_total += diff
+                pair_count += 1
+                if diff > max_diff:
+                    max_diff = diff
+                excess = diff - deltas[col_idx]
+                if excess > 0:
+                    pairwise_excess_total += excess
+
+        max_pairwise_diffs[col_idx] = max_diff
+        avg_pairwise_diffs[col_idx] = pairwise_diff_total / pair_count if pair_count else 0.0
+
+        # Score each column by average pairwise violation across group means.
+        # Score == 0 means every pair is within the column delta.
+        score += pairwise_excess_total / pair_count if pair_count else 0.0
+
+    return Evaluation(
+        score=score,
+        max_pairwise_diffs=max_pairwise_diffs,
+        avg_pairwise_diffs=avg_pairwise_diffs,
+        means_by_group=means_by_group,
+    )
 
 
 def evaluation_sort_key(eval_result: Evaluation, deltas: list[float]) -> tuple[float, float, float]:
@@ -251,15 +276,25 @@ def evaluation_sort_key(eval_result: Evaluation, deltas: list[float]) -> tuple[f
     2) Normalized spread sum (scale-aware tie-breaker).
     3) Raw spread sum.
     """
-    normalized_spread_sum = 0.0
-    for spread, delta in zip(eval_result.spreads, deltas):
+    normalized_avg_pairwise_sum = 0.0
+    normalized_max_pairwise_sum = 0.0
+    for avg_diff, max_diff, delta in zip(
+        eval_result.avg_pairwise_diffs, eval_result.max_pairwise_diffs, deltas
+    ):
         if delta > 0:
-            normalized_spread_sum += spread / delta
-        elif spread == 0:
-            normalized_spread_sum += 0.0
+            normalized_avg_pairwise_sum += avg_diff / delta
+            normalized_max_pairwise_sum += max_diff / delta
+        elif avg_diff == 0 and max_diff == 0:
+            normalized_avg_pairwise_sum += 0.0
+            normalized_max_pairwise_sum += 0.0
         else:
-            normalized_spread_sum += float("inf")
-    return (eval_result.score, normalized_spread_sum, sum(eval_result.spreads))
+            normalized_avg_pairwise_sum += float("inf")
+            normalized_max_pairwise_sum += float("inf")
+    return (
+        eval_result.score,
+        normalized_avg_pairwise_sum,
+        normalized_max_pairwise_sum,
+    )
 
 
 def initial_groups(
@@ -399,10 +434,15 @@ def write_group_summary_csv(
                 row[metric] = f"{means[col_idx]:.6f}"
             writer.writerow(row)
 
-        spread_row = {"Group": "Spread(max-min)"}
+        spread_row = {"Group": "MaxPairwiseDiff"}
         for col_idx, metric in enumerate(metric_headers):
-            spread_row[metric] = f"{eval_result.spreads[col_idx]:.6f}"
+            spread_row[metric] = f"{eval_result.max_pairwise_diffs[col_idx]:.6f}"
         writer.writerow(spread_row)
+
+        avg_pairwise_row = {"Group": "AvgPairwiseDiff"}
+        for col_idx, metric in enumerate(metric_headers):
+            avg_pairwise_row[metric] = f"{eval_result.avg_pairwise_diffs[col_idx]:.6f}"
+        writer.writerow(avg_pairwise_row)
 
         delta_row = {"Group": "AllowedDelta"}
         for col_idx, metric in enumerate(metric_headers):
@@ -411,14 +451,18 @@ def write_group_summary_csv(
 
 
 def format_col_report(
-    metric_headers: list[str], spreads: list[float], deltas: list[float]
+    metric_headers: list[str],
+    max_pairwise_diffs: list[float],
+    avg_pairwise_diffs: list[float],
+    deltas: list[float],
 ) -> str:
     lines = []
     for col_idx, metric in enumerate(metric_headers):
-        ok = spreads[col_idx] <= deltas[col_idx] + 1e-12
+        ok = max_pairwise_diffs[col_idx] <= deltas[col_idx] + 1e-12
         status = "OK" if ok else "FAIL"
         lines.append(
-            f"  - {metric}: spread={spreads[col_idx]:.6f}, "
+            f"  - {metric}: avg_pairwise={avg_pairwise_diffs[col_idx]:.6f}, "
+            f"max_pairwise={max_pairwise_diffs[col_idx]:.6f}, "
             f"delta={deltas[col_idx]:.6f} [{status}]"
         )
     return "\n".join(lines)
@@ -574,7 +618,13 @@ def main() -> int:
             file=sys.stderr,
         )
         print(
-            "Best attempt column report:\n" + format_col_report(metric_headers, eval_result.spreads, deltas),
+            "Best attempt column report:\n"
+            + format_col_report(
+                metric_headers,
+                eval_result.max_pairwise_diffs,
+                eval_result.avg_pairwise_diffs,
+                deltas,
+            ),
             file=sys.stderr,
         )
         return 1
@@ -603,7 +653,14 @@ def main() -> int:
     if args.optimize_seconds > 0:
         print(f"Optimization window: {args.optimize_seconds:.3f} seconds")
     print("Column checks:")
-    print(format_col_report(metric_headers, eval_result.spreads, deltas))
+    print(
+        format_col_report(
+            metric_headers,
+            eval_result.max_pairwise_diffs,
+            eval_result.avg_pairwise_diffs,
+            deltas,
+        )
+    )
     return 0
 
 
