@@ -1,0 +1,7 @@
+# Generated outputs from rat_group_balancer.py
+grouped_rats.csv
+group_summary.csv
+
+# Python cache
+__pycache__/
+*.pyc
