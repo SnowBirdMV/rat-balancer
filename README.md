@@ -1,6 +1,6 @@
 # Rat Balancer
 
-`rat_group_balancer.py` builds equal-sized groups of rats from a CSV while balancing each metric column across groups.
+`rat_group_balancer.py` builds as-even-as-possible groups of rats from a CSV while balancing each metric column across groups.
 
 For each numeric column, the script checks pairwise group averages:
 
@@ -77,7 +77,7 @@ python3 rat_group_balancer.py input.csv \
 python3 rat_group_balancer.py INPUT_CSV --groups N --deltas SPEC [options]
 ```
 
-- `--groups`: number of groups to create (must divide total rat count exactly)
+- `--groups`: number of groups to create (group sizes differ by at most 1)
 - `--deltas`: delta spec (see formats above)
 - `--output`: grouped output CSV path (default `grouped_rats.csv`)
 - `--summary-output`: summary output CSV path (default `group_summary.csv`)
@@ -117,6 +117,12 @@ python3 rat_group_balancer.py test_csv/impossible_strict_delta.csv --groups 2 --
 
 ```bash
 python3 rat_group_balancer.py test_csv/performance_100.csv --groups 10 --deltas 25,10,20,20
+```
+
+100 rats split into 15 near-equal groups:
+
+```bash
+python3 rat_group_balancer.py test_csv/performance_100.csv --groups 15 --deltas 35,12,25,25
 ```
 
 100-row performance test with max-time optimization (search for best up to 10 seconds):

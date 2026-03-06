@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
 """
-Build equal-sized rat groups from a CSV while balancing per-column averages.
+Build near-equal rat groups from a CSV while balancing per-column averages.
 
 Input CSV format:
 - A `Name` column first.
 - Any number of numeric columns after `Name`.
 - One rat per row.
 
-A grouping is valid when, for every numeric column, the difference between the
-largest and smallest group average is <= that column's delta.
+A grouping is valid when, for every numeric column, every pair of group
+averages differs by <= that column's delta.
 
 Examples:
   python rat_group_balancer.py rats.csv --groups 3 --deltas 5,2,1.5
@@ -273,8 +273,8 @@ def evaluation_sort_key(eval_result: Evaluation, deltas: list[float]) -> tuple[f
     """
     Lower is better.
     1) Constraint violation score (0 means fully valid).
-    2) Normalized spread sum (scale-aware tie-breaker).
-    3) Raw spread sum.
+    2) Normalized average pairwise diff sum (scale-aware tie-breaker).
+    3) Normalized max pairwise diff sum.
     """
     normalized_avg_pairwise_sum = 0.0
     normalized_max_pairwise_sum = 0.0
@@ -300,13 +300,16 @@ def evaluation_sort_key(eval_result: Evaluation, deltas: list[float]) -> tuple[f
 def initial_groups(
     rat_count: int, group_count: int, rng: random.Random
 ) -> list[list[int]]:
+    base_size = rat_count // group_count
+    extra_groups = rat_count % group_count
+    target_sizes = [base_size + 1] * extra_groups + [base_size] * (group_count - extra_groups)
+
     indices = list(range(rat_count))
     rng.shuffle(indices)
 
-    group_size = rat_count // group_count
     groups: list[list[int]] = []
     cursor = 0
-    for _ in range(group_count):
+    for group_size in target_sizes:
         groups.append(indices[cursor : cursor + group_size])
         cursor += group_size
     return groups
@@ -468,11 +471,20 @@ def format_col_report(
     return "\n".join(lines)
 
 
+def format_group_sizes(groups: list[list[int]]) -> str:
+    counts: dict[int, int] = {}
+    for size in (len(members) for members in groups):
+        counts[size] = counts.get(size, 0) + 1
+    return ", ".join(
+        f"{size} rats x {counts[size]} groups" for size in sorted(counts.keys(), reverse=True)
+    )
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = FriendlyArgumentParser(
         description=(
-            "Split rats into equal-sized groups while keeping each metric's group "
-            "averages within per-column delta limits."
+            "Split rats into as-even-as-possible groups while keeping each metric's "
+            "group averages within per-column delta limits."
         ),
         formatter_class=argparse.RawTextHelpFormatter,
         epilog=(
@@ -487,7 +499,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--groups",
         type=int,
         required=True,
-        help="Number of equal-sized groups to create.",
+        help="Number of groups to create (sizes will differ by at most 1).",
     )
     parser.add_argument(
         "--deltas",
@@ -506,7 +518,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--summary-output",
         default="group_summary.csv",
-        help="Output CSV path for group means/spreads (default: group_summary.csv).",
+        help="Output CSV path for group means/pairwise stats (default: group_summary.csv).",
     )
     parser.add_argument(
         "--name-column",
@@ -590,12 +602,6 @@ def main() -> int:
             parser,
             f"Cannot create {args.groups} groups from {rat_count} rats.",
         )
-    if rat_count % args.groups != 0:
-        return fail_with_help(
-            parser,
-            f"Rat count ({rat_count}) is not divisible by number of groups ({args.groups}); "
-            "equal-sized groups are impossible.",
-        )
 
     rng = random.Random(args.seed)
     data_matrix = [rat.values for rat in rats]
@@ -647,7 +653,8 @@ def main() -> int:
     )
 
     print("Balanced grouping found.")
-    print(f"Rats: {rat_count}, Groups: {args.groups}, Group size: {rat_count // args.groups}")
+    print(f"Rats: {rat_count}, Groups: {args.groups}")
+    print(f"Group size distribution: {format_group_sizes(groups)}")
     print(f"Grouped output: {args.output}")
     print(f"Summary output: {args.summary_output}")
     if args.optimize_seconds > 0:
