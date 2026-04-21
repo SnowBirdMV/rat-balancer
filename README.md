@@ -2,6 +2,8 @@
 
 `rat_group_balancer.py` builds as-even-as-possible groups of rats from a CSV while balancing each metric column across groups.
 
+`--groups` accepts either a group count like `4` or explicit group sizes like `3,6,3`.
+
 For each numeric column, the script checks pairwise group averages:
 
 `abs(group_average_i - group_average_j) <= allowed_delta_for_that_column` for all group pairs `i, j`.
@@ -30,6 +32,12 @@ Rat003,249,11,66
 ```bash
 python3 rat_group_balancer.py input.csv --groups 4 --deltas 5,2,3
 ```
+
+```bash
+python3 rat_group_balancer.py input.csv --groups 3,6,3 --deltas 5,2,3
+```
+
+When you pass explicit sizes, they must add up to the total number of rats in the CSV.
 
 This writes:
 
@@ -77,7 +85,7 @@ python3 rat_group_balancer.py input.csv \
 python3 rat_group_balancer.py INPUT_CSV --groups N --deltas SPEC [options]
 ```
 
-- `--groups`: number of groups to create (group sizes differ by at most 1)
+- `--groups`: number of groups to create, or explicit group sizes like `3,6,3`
 - `--deltas`: delta spec (see formats above)
 - `--output`: grouped output CSV path (default `grouped_rats.csv`)
 - `--summary-output`: summary output CSV path (default `group_summary.csv`)

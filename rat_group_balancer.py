@@ -105,9 +105,7 @@ def read_rats_csv(
             for metric_name in metric_headers:
                 raw = normalized_row[metric_name].strip()
                 if raw == "":
-                    raise ValueError(
-                        f"Row {row_num}, column '{metric_name}' is empty."
-                    )
+                    raise ValueError(f"Row {row_num}, column '{metric_name}' is empty.")
                 try:
                     values.append(float(raw))
                 except ValueError as exc:
@@ -138,6 +136,30 @@ def _parse_numeric_list(values: Iterable[str]) -> list[float]:
     if not parsed:
         raise ValueError("No delta values were provided.")
     return parsed
+
+
+def parse_group_sizes(group_spec: str, rat_count: int) -> list[int]:
+    try:
+        sizes = [int(part.strip()) for part in group_spec.split(",")]
+    except ValueError as exc:
+        raise ValueError(
+            "`--groups` must be an integer or comma-separated integers."
+        ) from exc
+    if any(size <= 0 for size in sizes):
+        raise ValueError("All group sizes must be > 0.")
+    if len(sizes) == 1:
+        group_count = sizes[0]
+        if group_count > rat_count:
+            raise ValueError(
+                f"Cannot create {group_count} groups from {rat_count} rats."
+            )
+        base_size, extra_groups = divmod(rat_count, group_count)
+        return [base_size + 1] * extra_groups + [base_size] * (
+            group_count - extra_groups
+        )
+    if sum(sizes) != rat_count:
+        raise ValueError(f"Explicit group sizes must sum to {rat_count} rats.")
+    return sizes
 
 
 def parse_deltas(delta_spec: str, metric_headers: list[str]) -> list[float]:
@@ -218,7 +240,9 @@ def evaluate_groups(
     group_count = len(groups)
     metric_count = len(deltas)
 
-    means_by_group: list[list[float]] = [[0.0] * metric_count for _ in range(group_count)]
+    means_by_group: list[list[float]] = [
+        [0.0] * metric_count for _ in range(group_count)
+    ]
     for group_idx, members in enumerate(groups):
         if not members:
             raise ValueError("Internal error: group with zero members.")
@@ -237,7 +261,9 @@ def evaluate_groups(
     score = 0.0
 
     for col_idx in range(metric_count):
-        col_means = [means_by_group[group_idx][col_idx] for group_idx in range(group_count)]
+        col_means = [
+            means_by_group[group_idx][col_idx] for group_idx in range(group_count)
+        ]
 
         max_diff = 0.0
         pairwise_excess_total = 0.0
@@ -255,7 +281,9 @@ def evaluate_groups(
                     pairwise_excess_total += excess
 
         max_pairwise_diffs[col_idx] = max_diff
-        avg_pairwise_diffs[col_idx] = pairwise_diff_total / pair_count if pair_count else 0.0
+        avg_pairwise_diffs[col_idx] = (
+            pairwise_diff_total / pair_count if pair_count else 0.0
+        )
 
         # Score each column by average pairwise violation across group means.
         # Score == 0 means every pair is within the column delta.
@@ -269,7 +297,9 @@ def evaluate_groups(
     )
 
 
-def evaluation_sort_key(eval_result: Evaluation, deltas: list[float]) -> tuple[float, float, float]:
+def evaluation_sort_key(
+    eval_result: Evaluation, deltas: list[float]
+) -> tuple[float, float, float]:
     """
     Lower is better.
     1) Constraint violation score (0 means fully valid).
@@ -298,12 +328,8 @@ def evaluation_sort_key(eval_result: Evaluation, deltas: list[float]) -> tuple[f
 
 
 def initial_groups(
-    rat_count: int, group_count: int, rng: random.Random
+    rat_count: int, target_sizes: list[int], rng: random.Random
 ) -> list[list[int]]:
-    base_size = rat_count // group_count
-    extra_groups = rat_count % group_count
-    target_sizes = [base_size + 1] * extra_groups + [base_size] * (group_count - extra_groups)
-
     indices = list(range(rat_count))
     rng.shuffle(indices)
 
@@ -321,7 +347,7 @@ def deep_copy_groups(groups: list[list[int]]) -> list[list[int]]:
 
 def find_balanced_groups(
     data_matrix: list[list[float]],
-    group_count: int,
+    target_sizes: list[int],
     deltas: list[float],
     *,
     max_restarts: int,
@@ -330,6 +356,7 @@ def find_balanced_groups(
     rng: random.Random,
 ) -> tuple[list[list[int]] | None, Evaluation]:
     rat_count = len(data_matrix)
+    group_count = len(target_sizes)
     best_groups: list[list[int]] | None = None
     best_eval: Evaluation | None = None
 
@@ -345,11 +372,11 @@ def find_balanced_groups(
             break
 
         restart_count += 1
-        groups = initial_groups(rat_count, group_count, rng)
+        groups = initial_groups(rat_count, target_sizes, rng)
         current_eval = evaluate_groups(groups, data_matrix, deltas)
-        if best_eval is None or evaluation_sort_key(current_eval, deltas) < evaluation_sort_key(
-            best_eval, deltas
-        ):
+        if best_eval is None or evaluation_sort_key(
+            current_eval, deltas
+        ) < evaluation_sort_key(best_eval, deltas):
             best_eval = current_eval
             best_groups = deep_copy_groups(groups)
             if best_eval.score == 0 and not timed_mode:
@@ -379,9 +406,9 @@ def find_balanced_groups(
 
             if improved or accept_worse:
                 current_eval = trial_eval
-                if best_eval is None or evaluation_sort_key(current_eval, deltas) < evaluation_sort_key(
-                    best_eval, deltas
-                ):
+                if best_eval is None or evaluation_sort_key(
+                    current_eval, deltas
+                ) < evaluation_sort_key(best_eval, deltas):
                     best_eval = current_eval
                     best_groups = deep_copy_groups(groups)
                     if best_eval.score == 0 and not timed_mode:
@@ -476,7 +503,8 @@ def format_group_sizes(groups: list[list[int]]) -> str:
     for size in (len(members) for members in groups):
         counts[size] = counts.get(size, 0) + 1
     return ", ".join(
-        f"{size} rats x {counts[size]} groups" for size in sorted(counts.keys(), reverse=True)
+        f"{size} rats x {counts[size]} groups"
+        for size in sorted(counts.keys(), reverse=True)
     )
 
 
@@ -490,16 +518,18 @@ def build_parser() -> argparse.ArgumentParser:
         epilog=(
             "Examples:\n"
             "  python rat_group_balancer.py rats.csv --groups 3 --deltas 5,2,1.5\n"
-            "  python rat_group_balancer.py rats.csv --groups 4 --deltas \"Weight=5,Age=2,3=1.0\"\n"
+            "  python rat_group_balancer.py rats.csv --groups 3,6,3 --deltas 5,2,1.5\n"
+            '  python rat_group_balancer.py rats.csv --groups 4 --deltas "Weight=5,Age=2,3=1.0"\n'
             "  python rat_group_balancer.py rats.csv --groups 5 --deltas 3 --optimize-seconds 10\n"
         ),
     )
-    parser.add_argument("input_csv", help="Path to input CSV (Name + numeric metric columns).")
+    parser.add_argument(
+        "input_csv", help="Path to input CSV (Name + numeric metric columns)."
+    )
     parser.add_argument(
         "--groups",
-        type=int,
         required=True,
-        help="Number of groups to create (sizes will differ by at most 1).",
+        help="Group count (e.g. 3) or explicit group sizes (e.g. 3,6,3).",
     )
     parser.add_argument(
         "--deltas",
@@ -565,7 +595,9 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def fail_with_help(parser: argparse.ArgumentParser, message: str, exit_code: int = 2) -> int:
+def fail_with_help(
+    parser: argparse.ArgumentParser, message: str, exit_code: int = 2
+) -> int:
     print(f"Input error: {message}\n", file=sys.stderr)
     parser.print_help(sys.stderr)
     return exit_code
@@ -575,8 +607,6 @@ def main() -> int:
     parser = build_parser()
     args = parser.parse_args()
 
-    if args.groups <= 0:
-        return fail_with_help(parser, "`--groups` must be > 0.")
     if args.max_restarts <= 0 or args.steps_per_restart <= 0:
         return fail_with_help(
             parser,
@@ -597,18 +627,17 @@ def main() -> int:
         return fail_with_help(parser, str(exc))
 
     rat_count = len(rats)
-    if args.groups > rat_count:
-        return fail_with_help(
-            parser,
-            f"Cannot create {args.groups} groups from {rat_count} rats.",
-        )
+    try:
+        group_sizes = parse_group_sizes(args.groups, rat_count)
+    except ValueError as exc:
+        return fail_with_help(parser, str(exc))
 
     rng = random.Random(args.seed)
     data_matrix = [rat.values for rat in rats]
 
     groups, eval_result = find_balanced_groups(
         data_matrix,
-        args.groups,
+        group_sizes,
         deltas,
         max_restarts=args.max_restarts,
         steps_per_restart=args.steps_per_restart,
@@ -653,7 +682,7 @@ def main() -> int:
     )
 
     print("Balanced grouping found.")
-    print(f"Rats: {rat_count}, Groups: {args.groups}")
+    print(f"Rats: {rat_count}, Groups: {len(group_sizes)}")
     print(f"Group size distribution: {format_group_sizes(groups)}")
     print(f"Grouped output: {args.output}")
     print(f"Summary output: {args.summary_output}")
